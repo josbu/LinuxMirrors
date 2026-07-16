@@ -1,88 +1,85 @@
 function useThemeTransition() {
-    // 更新过渡样式变量
-    function updateViewTransitionVariables(isDarkTheme) {
-        document.documentElement.style.setProperty('--view-transition-z-index-foreground', isDarkTheme ? '999' : '1')
-        document.documentElement.style.setProperty('--view-transition-z-index-background', isDarkTheme ? '1' : '999')
-    }
-    // 切换主题按钮点击事件
+    let isProgrammaticClick = false // 防止程序触发的点击再次进入处理函数
+    let isAnimating = false // 防止快速点击导致多个动画同时运行
+
     function handleThemeToggle(e) {
-        // 阻止默认点击事件
+        // 如果是程序触发的点击，或者正在播放动画，则忽略此次点击
+        if (isProgrammaticClick || isAnimating) return
         e.preventDefault()
         e.stopPropagation()
-        // 获取目标输入元素
         const targetId = this.getAttribute('for')
         const targetInput = document.getElementById(targetId)
         if (!targetInput) return
-        // 获取主题状态
-        const targetTheme = targetInput.getAttribute('data-md-color-scheme') // 目标主题（system、default、slate）
-        const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'slate' : 'default' // 系统主题（default、slate）
-        const currentScheme = document.body.getAttribute('data-md-color-scheme') // 当前主题（default、slate）
-        // 当目标主题与当前主题相同时不触发动画
-        if (targetTheme === 'system') {
-            if (systemTheme === currentScheme) {
-                targetInput.click()
-                return
-            }
-        } else if (targetTheme === currentScheme) {
+        const targetTheme = targetInput.getAttribute('data-md-color-scheme')
+        const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'slate' : 'default'
+        const currentScheme = document.body.getAttribute('data-md-color-scheme')
+        let newScheme = targetTheme === 'system' ? systemTheme : targetTheme
+        // 主题没变化，不启动动画，但仍需切换 input 以维持 MkDocs 内部状态
+        if (newScheme === currentScheme) {
+            isProgrammaticClick = true
             targetInput.click()
+            isProgrammaticClick = false
             return
         }
-        // 当前主题状态
-        const isSystemDarkTheme = systemTheme === 'slate' // 系统是否为深色主题
-        const isCurrentDarkTheme = currentScheme.includes('slate') // 当前是否为深色主题
-        const isSwitchToDarkTheme = !isCurrentDarkTheme // 是否将切换到深色主题
-        // 根据系统主题设置动画样式
-        updateViewTransitionVariables(isSystemDarkTheme)
-        // 判断切换方向是否与系统主题一致
-        // 如果系统是深色，切换到深色是"靠近系统"；如果系统是浅色，切换到浅色是"靠近系统"
-        const isMovingTowardsSystemTheme = (isSwitchToDarkTheme && isSystemDarkTheme) || (!isSwitchToDarkTheme && !isSystemDarkTheme)
-        // 动画参数
+        // 防止动画期间再次触发
+        isAnimating = true
         const x = e.clientX
         const y = e.clientY
         const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y))
-        const clipPath = [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`]
-        // 启动视图过渡
-        document
-            .startViewTransition(async () => {
-                // 切换主题
-                targetInput.click()
-                // 添加CSS类用于动画控制
-                document.documentElement.classList.remove(isSwitchToDarkTheme ? 'light' : 'dark')
-                document.documentElement.classList.add(isSwitchToDarkTheme ? 'dark' : 'light')
-                // 等待主题变化完成
-                await new Promise((resolve) => setTimeout(resolve, 100))
-            })
-            .ready.then(() => {
-                // 当朝向系统主题方向变化时使用使用缩小效果（reversed clipPath），反之放大效果（clipPath）
-                document.documentElement.animate(
+        const transition = document.startViewTransition(() => {
+            isProgrammaticClick = true
+            targetInput.click()
+            isProgrammaticClick = false
+        })
+        transition.ready
+            .then(() => {
+                // 新视图的裁剪扩散动画
+                const newViewAnim = document.documentElement.animate(
                     {
-                        clipPath: isMovingTowardsSystemTheme ? [...clipPath].reverse() : clipPath,
-                        transform: 'translateZ(0)',
+                        clipPath: [`circle(0 at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`],
                     },
                     {
                         duration: 500,
-                        easing: 'ease-in',
-                        pseudoElement: isMovingTowardsSystemTheme ? '::view-transition-old(root)' : '::view-transition-new(root)',
-                    }
+                        easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+                        pseudoElement: '::view-transition-new(root)',
+                        fill: 'forwards',
+                    },
                 )
+                // 旧视图保持完全显示
+                const oldViewAnim = document.documentElement.animate(
+                    { opacity: [1, 1] },
+                    {
+                        duration: 500,
+                        pseudoElement: '::view-transition-old(root)',
+                        fill: 'forwards',
+                    },
+                )
+                // 等待所有自定义动画结束后解锁
+                Promise.all([newViewAnim.finished, oldViewAnim.finished])
+                    .then(() => {
+                        isAnimating = false
+                    })
+                    .catch(() => {
+                        // 动画被取消（如快速切走）时也要解锁
+                        isAnimating = false
+                    })
+            })
+            .catch(() => {
+                // 如果 startViewTransition 被拒绝（如跳过），立即解锁
+                isAnimating = false
             })
     }
-
-    // 不支持此特性
-    if (typeof document.startViewTransition !== 'function') {
-        return
-    }
-    // 获取主题切换按钮Dom
+    // 不支持 View Transition API 则直接返回
+    if (typeof document.startViewTransition !== 'function') return
     const themeToggles = document.querySelectorAll('form[data-md-component="palette"] .md-header__button.md-icon')
     themeToggles.forEach((toggle) => {
+        toggle.removeEventListener('click', handleThemeToggle, true)
         toggle.addEventListener('click', handleThemeToggle, { capture: true })
     })
     // 初始化主题状态类
     const currentScheme = document.body.getAttribute('data-md-color-scheme')
     const isDark = currentScheme.includes('slate')
     document.documentElement.classList.add(isDark ? 'dark' : 'light')
-    // 初始化过渡样式变量
-    updateViewTransitionVariables(isDark)
 }
 
 document.addEventListener('DOMContentLoaded', function () {

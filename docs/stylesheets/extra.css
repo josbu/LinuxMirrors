@@ -818,19 +818,3 @@ button[data-terminal-control] {
     animation: none;
     mix-blend-mode: normal;
 }
-
-.dark::view-transition-old(root) {
-    z-index: var(--view-transition-z-index-foreground);
-}
-
-.dark::view-transition-new(root) {
-    z-index: var(--view-transition-z-index-background);
-}
-
-::view-transition-old(root) {
-    z-index: var(--view-transition-z-index-background)
-}
-
-::view-transition-new(root) {
-    z-index: var(--view-transition-z-index-foreground);
-}
